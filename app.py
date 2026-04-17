@@ -258,6 +258,21 @@ def predict_engagement(input_dict, artifacts):
     df_in['total_interactions_per_reach'] = df_in['total_interactions'] / (df_in['reach'] + 1)
     df_in['log_likes'] = np.log1p(df_in['likes'])
     df_in['year'] = str(df_in['year'].values[0])
+    
+    # Time Series Features
+    df_in['is_weekend'] = df_in['day_of_the_week'].isin([5,6]).astype(int)
+    
+    
+    # Define 'engagement_rate' for lag features
+    df_in['engagement_rate'] = (df_in['total_interactions'] / (df_in['reach'] + 1))
+    
+    df_in['lag_1'] = df_in['engagement_rate'].shift(1)
+    df_in['lag_7'] = df_in['engagement_rate'].shift(7)
+    df_in['lag_14'] = df_in['engagement_rate'].shift(14)
+    
+    # Rolling Statistics
+    df_in['rolling_mean_7'] = df_in['engagement_rate'].rolling(window=7).mean()
+    df_in['rolling_std_7']  = df_in['engagement_rate'].rolling(window=7).std()
 
     numeric_features = artifacts['numeric_features']
     categorical_data = artifacts.get('categorical_data',
