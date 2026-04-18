@@ -12,6 +12,8 @@ import os
 import statistics
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from sklearn.model_selection import train_test_split
+from sklearn.pipeline import Pipeline
+from xgboost import XGBRegressor
 
 # ─────────────────────────────────────────────
 # PAGE CONFIG
@@ -333,8 +335,8 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ── TABS ────────────────────────────────────
-tab_overview, tab_eda, tab_model, tab_predict = st.tabs([
-    "📊 Overview", "🔍 EDA", "🤖 Model Performance", "🎯 Predict"
+tab_overview, tab_eda, tab_model, tab_predict, tab_forecast = st.tabs([
+    "📊 Overview", "🔍 EDA", "🤖 Model Performance", "🎯 Predict", "📈 Forecast"
 ])
 
 
@@ -585,7 +587,7 @@ with tab_model:
         xgb_pred = xgb.predict(X_test)
         model_results = {
             'Linear Regression': {'pred': lr_pred},
-            'XGBoost': {'pred': xgb_pred},
+            'XGBoost': {'pred': xgb_pred}
         }
         y_test_vals = y_test
         xgb_fi = pd.DataFrame({'Features': preprocessor.get_feature_names_out(),
@@ -786,3 +788,174 @@ with tab_predict:
                     "total_interactions_per_reach": round(total_interactions / (reach + 1), 6),
                     "log_likes": round(np.log1p(likes), 6),
                 })
+
+
+# ════════════════════════════════════════════
+# TAB 5 — FORECAST
+# ════════════════════════════════════════════
+with tab_forecast:
+    st.markdown('<div class="section-title">Forecast Enagement rate for 2026</div>', unsafe_allow_html=True)
+    st.markdown("This Forecast is powered by XGBoost for Time Series forecasting to forecast the engagement rate for 2026")
+    
+    # Preprocessing for Time Series
+    numeric_features = ml_df.select_dtypes(['int64','float64']).columns.tolist()
+    categorical_data = ['media_type','traffic_source','content_category','year','month','day_of_the_week']
+    model_numeric = [c for c in numeric_features if c not in ['engagement_rate','log_likes']]
+    model_features = model_numeric + categorical_data
+    features = numeric_features + categorical_data
+    time_series_df = ml_df[features]
+
+    # Fixing time features
+    time_series_df['upload_date'] = ml_df['upload_date']
+    time_series_df['upload_date'] = pd.to_datetime(time_series_df['upload_date'])
+    time_series_df = time_series_df.sort_values(by='upload_date').reset_index(drop=True)
+    time_series_df = time_series_df.set_index('upload_date')
+    from pandas.api.types import CategoricalDtype
+    cat_type_day = CategoricalDtype(categories=['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'], ordered=True)
+    cat_type_month = CategoricalDtype(categories=['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'], ordered=True)
+    time_series_df['day_of_the_week'] = time_series_df['day_of_the_week'].astype(cat_type_day)
+    time_series_df['month'] = time_series_df['month'].astype(cat_type_month)
+
+    # Add lag features
+    time_series_df['lag_1'] = time_series_df['engagement_rate'].shift(1)
+    time_series_df['lag_7'] = time_series_df['engagement_rate'].shift(7)
+    time_series_df['lag_14'] = time_series_df['engagement_rate'].shift(14)
+
+    # Rolling Statistics
+    time_series_df['rolling_mean_7'] = time_series_df['engagement_rate'].rolling(window=7).mean()
+    time_series_df['rolling_std_7']  = time_series_df['engagement_rate'].rolling(window=7).std()
+
+    # Sort the entire dataframe chronologically
+    train_size = int(len(time_series_df) * 0.8)
+    train_ts = time_series_df[:train_size]
+    test_ts  = time_series_df[train_size:]
+
+    # Feature Selection
+    X_train_ts = train_ts.drop('engagement_rate', axis=1)
+    X_test_ts = test_ts.drop('engagement_rate', axis=1)
+    y_train_ts = train_ts['engagement_rate']
+    y_test_ts = test_ts['engagement_rate']
+
+    # Visualizing Engagement over time
+    forecast_section = st.selectbox("Select Analysis",
+    ["Engagement Rate over time", "Engagement Rate by Day of the Week", "Engagement Rate Over Time (Train vs Test)"])
+
+    # Set colors
+    custom_colors = ['#636EFA', '#EF553B', '#00CC96']
+    if forecast_section == 'Engagement Rate over time':
+        st.markdown('<div class="section-title">Engagement Rate over time</div>', unsafe_allow_html=True)
+        fig = px.bar(time_series_df, x=time_series_df.index, y='engagement_rate', title=' Rate Over Time')
+        fig.update_traces(textposition='outside')
+        st.plotly_chart(fig, use_container_width=True)
+    if forecast_section == 'Engagement Rate by Day of the Week':
+        st.markdown('<div class="section-title">Engagement Rate by Day of the Week</div>', unsafe_allow_html=True)
+        fig = px.box(time_series_df, x='day_of_the_week', y='engagement_rate', color='year', color_discrete_sequence=custom_colors)
+        st.plotly_chart(fig, use_container_width=True)
+    if forecast_section == 'Engagement Rate Over Time (Train vs Test)':
+        st.markdown('<div class="section-title">Engagement Rate Over Time (Train vs Test)</div>', unsafe_allow_html=True)
+        train_df = train_ts.copy()
+        train_df['set'] = 'Train'
+        test_df = test_ts.copy()
+        test_df['set'] = 'Test'
+        combined_df = pd.concat([train_df, test_df])
+        fig = px.bar(
+            combined_df,
+            x=combined_df.index,
+            y='engagement_rate',
+            color='set',
+            title='Train vs Test Engagement Rate',
+            color_discrete_sequence=custom_colors
+        )
+        st.plotly_chart(fig, use_container_width=True)
+    
+    # Display forecast dataframe
+    # Preprocessing for forecast
+    ts_df = time_series_df.copy()
+    ts_features = ['lag_1', 'lag_7', 'lag_14', 'day_of_the_week', 'month', 'year']
+    target = 'engagement_rate'
+    st.write(ts_df.head())
+    X_ts = ts_df[ts_features]
+    y_ts = ts_df[target]
+
+    month_map = {
+        'January': 1, 'February': 2, 'March': 3,
+        'April': 4, 'May': 5, 'June': 6,
+        'July': 7, 'August': 8, 'September': 9,
+        'October': 10, 'November': 11, 'December': 12
+    }
+
+    X_ts['month'] = X_ts['month'].map(month_map)
+    year_map = {
+        '2024': 2024,
+        '2025': 2025
+    }
+
+    X_ts['year'] = X_ts['year'].map(year_map)
+
+    day_map = {
+        'Sunday':1, 'Monday':2, 'Tuesday':3,
+        'Wednesday': 4, 'Thursday':5, 'Friday':6,
+        'Saturday': 7
+    }
+    X_ts['day_of_the_week'] = X_ts['day_of_the_week'].map(day_map)
+
+    # Convert to integer
+    X_ts['month'] = X_ts['month'].astype(int)
+    X_ts['year'] = X_ts['year'].astype(int)
+    X_ts['day_of_the_week'] = X_ts['day_of_the_week'].astype(int)
+
+    # Retrain the model using tuned model
+    xgb_forecast_model = Pipeline([
+        ('model', XGBRegressor(
+            n_estimators=300,
+            learning_rate=0.05,
+            max_depth=5,
+            random_state=42
+        ))
+    ])
+
+    xgb_forecast_model.fit(X_ts, y_ts)
+
+    future_dates = pd.date_range(start=test_ts.index.max(), end='2026-12-01', freq='W')
+
+    future_df = pd.DataFrame({'date': future_dates})
+    future_df['month'] = future_df['date'].dt.month.astype(int)
+    future_df['year'] = future_df['date'].dt.year.astype(int)
+    future_df['day_of_the_week'] = future_df['date'].dt.day_name().map(day_map).astype(int)
+
+    def forecast_with_lags(xgb_forecast_model, time_series_df, future_df, target_col):
+        data = time_series_df.copy()
+        ts_preds = []
+
+        for i in range(len(future_df)):
+            
+            if len(data) < 14:
+                raise ValueError("Not enough history for lag_14")
+
+            X_new_ts = pd.DataFrame({
+                'lag_1': [data[target_col].iloc[-1]],
+                'lag_7': [data[target_col].iloc[-7]],
+                'lag_14': [data[target_col].iloc[-14]],
+                'day_of_the_week': [future_df.iloc[i]['day_of_the_week']],
+                'month': [future_df.iloc[i]['month']],
+                'year': [future_df.iloc[i]['year']]
+            })
+
+            pred = xgb_forecast_model.predict(X_new_ts)[0]
+            ts_preds.append(pred)
+
+            # Append prediction
+            new_row = {target_col: pred}
+            data = pd.concat([data, pd.DataFrame([new_row])], ignore_index=True)
+
+        return ts_preds
+    xgb_preds_2026 = forecast_with_lags(
+    xgb_forecast_model,
+    time_series_df,
+    future_df,
+    target_col='engagement_rate'
+    )
+    xgb_preds_2026_df = pd.DataFrame({
+        'upload_date': future_df['date'],
+        'engagement_rate': xgb_preds_2026
+    })
