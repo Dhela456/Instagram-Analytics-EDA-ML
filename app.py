@@ -810,6 +810,7 @@ with tab_forecast:
     time_series_df['upload_date'] = pd.to_datetime(time_series_df['upload_date'])
     time_series_df = time_series_df.sort_values(by='upload_date').reset_index(drop=True)
     time_series_df = time_series_df.set_index('upload_date')
+
     from pandas.api.types import CategoricalDtype
     cat_type_day = CategoricalDtype(categories=['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'], ordered=True)
     cat_type_month = CategoricalDtype(categories=['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'], ordered=True)
@@ -873,7 +874,7 @@ with tab_forecast:
     ts_df = time_series_df.copy()
     ts_features = ['lag_1', 'lag_7', 'lag_14', 'day_of_the_week', 'month', 'year']
     target = 'engagement_rate'
-    st.write(ts_df.head())
+
     X_ts = ts_df[ts_features]
     y_ts = ts_df[target]
 
@@ -922,6 +923,7 @@ with tab_forecast:
     future_df['month'] = future_df['date'].dt.month.astype(int)
     future_df['year'] = future_df['date'].dt.year.astype(int)
     future_df['day_of_the_week'] = future_df['date'].dt.day_name().map(day_map).astype(int)
+    future_df['date'] = future_df['date'].dt.date
 
     def forecast_with_lags(xgb_forecast_model, time_series_df, future_df, target_col):
         data = time_series_df.copy()
@@ -959,3 +961,46 @@ with tab_forecast:
         'upload_date': future_df['date'],
         'engagement_rate': xgb_preds_2026
     })
+
+    # For daily forecast, use freq='D' and adjust the future_df creation accordingly
+    future_dates_daily = pd.date_range(start=test_ts.index.max(), end='2026-12-31', freq='D')
+    future_df_daily = pd.DataFrame({'date': future_dates_daily})
+    future_df_daily['month'] = future_df_daily['date'].dt.month.astype(int)
+    future_df_daily['year'] = future_df_daily['date'].dt.year.astype(int)
+    future_df_daily['day_of_the_week'] = future_df_daily['date'].dt.day_name().map(day_map).astype(int)
+    future_df_daily['date'] = future_df_daily['date'].dt.date
+
+    # Call Forecast function for daily predictions
+    xgb_preds_2026_daily = forecast_with_lags(
+        xgb_forecast_model,
+        time_series_df,
+        future_df_daily,
+        target_col='engagement_rate'
+    )
+    xgb_preds_2026_daily_df = pd.DataFrame({
+        'upload_date': future_df_daily['date'],
+        'engagement_rate': xgb_preds_2026_daily
+    })
+
+
+    st.markdown('<div class="section-title">2026 Engagement Rate Forecast</div>', unsafe_allow_html=True)
+    st.caption("The following line chart shows the forecasted engagement rate for each week of 2026 based on the XGBoost time series model. The model incorporates lag features and rolling statistics to capture temporal patterns in the data.")
+    fig = px.line(xgb_preds_2026_df, x='upload_date', y='engagement_rate',
+                title='Forecasted Engagement Rate for 2026',
+                labels={'upload_date':'Date', 'engagement_rate':'Engagement Rate'},
+                color_discrete_sequence=['#636EFA'])
+    st.plotly_chart(fig, use_container_width=True)
+    with st.expander('📊 View Forecasted Data'):
+        col_weekly, col_daily = st.columns(2)
+        
+        # For Weekly Forecast
+        with col_weekly:
+            st.subheader("Weekly Forecast")
+            st.write('This is the dataframe containing all engagement rate predictions for 2026. Each row corresponds to a weekly forecasted value.')
+            st.dataframe(xgb_preds_2026_df, use_container_width=True)
+
+        # For Daily Forecast
+        with col_daily:
+            st.subheader("Daily Forecast")
+            st.write('This is the dataframe containing all engagement rate predictions for 2026. Each row corresponds to a daily forecasted value.')
+            st.dataframe(xgb_preds_2026_daily_df, use_container_width=True)
